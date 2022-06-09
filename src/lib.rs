@@ -1,5 +1,4 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 use tokio::time::{sleep, Duration};
 use tokio::sync::{broadcast, Mutex};
@@ -39,8 +38,8 @@ impl<T> Dispatcher<T>
         });
     }
 
-    pub fn new_event_stream(&self) -> Arc<EventStream<T>> {
-        Arc::new(EventStream::new(self.sender.subscribe()))
+    pub fn new_event_stream(&self) -> EventStream<T> {
+        EventStream::new(self.sender.subscribe())
     }
 
     pub fn dispatch(&self, event: T) {
@@ -90,6 +89,8 @@ impl<T> EventStream<T>
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU32;
     use super::*;
 
     #[derive(Clone)]
@@ -97,14 +98,22 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
     async fn test_dispatcher() {
+        let handler_count1 = Arc::new(AtomicU32::new(0));
+        let hc1 = handler_count1.clone();
+
+        let handler_count2 = Arc::new(AtomicU32::new(0));
+        let hc2 = handler_count2.clone();
+
         let dispatcher = Dispatcher::<TestEvent>::new();
 
-        dispatcher.add(|event| -> bool {
+        dispatcher.add(move |event| -> bool {
+            hc1.fetch_add(1, Ordering::SeqCst);
             println!("[Event Handler #1] TestEvent({})", event.0);
             true
         });
 
-        dispatcher.add(|event| -> bool {
+        dispatcher.add(move |event| -> bool {
+            hc2.fetch_add(1, Ordering::SeqCst);
             println!("[Event Handler #2] TestEvent({})", event.0);
 
             event.0 != 6
@@ -117,5 +126,8 @@ mod tests {
         }
 
         sleep(Duration::from_millis(1000)).await;
+
+        assert_eq!(handler_count1.load(Ordering::SeqCst), 10_u32);
+        assert_eq!(handler_count2.load(Ordering::SeqCst), 6_u32);
     }
 }
